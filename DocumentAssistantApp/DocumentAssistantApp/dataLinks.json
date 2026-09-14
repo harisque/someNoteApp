@@ -1,0 +1,8 @@
+[
+  {
+    "name": "Standard Chartered",
+    "symbol": "STAN.L",
+    "sourceID": "yahoo",
+    "scopeDescription": "Daily end-of-day price history for Standard Chartered PLC (London Stock Exchange), sourced from Yahoo Finance. Each snapshot retains roughly the last 180 trading days of open, high, low, close and volume. Prices are quoted in pence (GBX). Read-only: the underlying series is summarized as latest figures, never shown as a raw table or chart."
+  }
+]

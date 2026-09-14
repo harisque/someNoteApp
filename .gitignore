@@ -1,0 +1,26 @@
+# macOS
+.DS_Store
+
+# Build artifacts
+.build/
+.swiftpm/
+DocumentAssistantApp/build-device/
+xcuserdata/
+*.xcuserstate
+
+# Model weights (keep local only)
+DocumentAssistantApp/Models/
+DocumentAssistantApp/DocumentAssistantApp/Models/miniCPM5_2B_MLX/
+
+# Previous explorations / third-party checkouts (keep local only)
+MiniCPM/
+MiniCPM-V-Apps/
+swift-tokenizers-mlx/
+demo_video/
+channels4_profile.jpg
+
+# Local-only documents
+HANDOFF.md
+
+# Backup of former embedded Xcode git repo
+.backup-DocumentAssistantApp-git/

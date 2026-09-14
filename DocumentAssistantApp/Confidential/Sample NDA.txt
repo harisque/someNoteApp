@@ -1,0 +1,26 @@
+SAMPLE NON-DISCLOSURE AGREEMENT
+
+This placeholder NDA is bundled with the app as an example Confidential
+document. Replace it with your organization's official agreement before
+shipping. Confidential documents are imported read-only and cannot be
+deleted, moved, or edited from within the app.
+
+1. Parties. This Agreement is entered into between the Disclosing Party and
+   the Receiving Party for the purpose of evaluating a potential business
+   relationship.
+
+2. Confidential Information. "Confidential Information" means any non-public
+   information disclosed by one party to the other, whether in written, oral,
+   or electronic form, that is designated as confidential.
+
+3. Obligations. The Receiving Party shall hold all Confidential Information in
+   strict confidence and shall not disclose it to any third party without prior
+   written consent.
+
+4. Term. The obligations under this Agreement survive for a period of three (3)
+   years from the date of disclosure.
+
+5. Return of Materials. Upon request, the Receiving Party shall return or
+   destroy all Confidential Information and certify such destruction in writing.
+
+This document is a non-binding sample and does not constitute legal advice.
