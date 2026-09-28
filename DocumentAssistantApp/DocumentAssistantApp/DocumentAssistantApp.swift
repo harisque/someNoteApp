@@ -187,7 +187,7 @@ struct DocumentAssistantApp: App {
         // embedding model is bundled alongside the LLMs and lazily loaded on first
         // use; its small footprint lets it coexist with the active language model.
         let embeddingDirectory = Bundle.main.bundleURL.appendingPathComponent(
-            "mlx-community:Qwen3-Embedding-0.6B-4bit-DWQ", isDirectory: true
+            "Qwen3-Embedding-0.6B-4bit-DWQ", isDirectory: true
         )
         assistant = DocumentAssistant(
             model: normalModel,

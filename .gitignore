@@ -12,6 +12,9 @@ DocumentAssistantApp/build-device/
 xcuserdata/
 *.xcuserstate
 
+# Archived (moved, not deleted) unused build artifacts
+_archive/
+
 # Model weights (keep local only)
 DocumentAssistantApp/Models/
 DocumentAssistantApp/DocumentAssistantApp/Models/miniCPM5_2B_MLX/
@@ -19,12 +22,12 @@ DocumentAssistantApp/DocumentAssistantApp/Models/miniCPM5_2B_MLX/
 # Previous explorations / third-party checkouts (keep local only)
 MiniCPM/
 MiniCPM-V-Apps/
-swift-tokenizers-mlx/
 demo_video/
 channels4_profile.jpg
 
 # Local-only documents
 HANDOFF.md
 
-# Backup of former embedded Xcode git repo
+# Backups of former embedded git repos
 .backup-DocumentAssistantApp-git/
+.backup-swift-tokenizers-mlx-git/

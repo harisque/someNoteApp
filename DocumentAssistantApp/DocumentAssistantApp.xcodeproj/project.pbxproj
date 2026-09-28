@@ -15,7 +15,7 @@
 		631FA72E3050D74500D9AFAB /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = 631FA72D3050D74500D9AFAB /* MLXVLM */; };
 		DA0000000000000000000003 /* MLXLMTokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = DA0000000000000000000002 /* MLXLMTokenizers */; };
 		DA0000000000000000000007 /* MLXEmbedders in Frameworks */ = {isa = PBXBuildFile; productRef = DA0000000000000000000008 /* MLXEmbedders */; };
-		DA0000000000000000000009 /* Models/mlx-community:Qwen3-Embedding-0.6B-4bit-DWQ in Resources */ = {isa = PBXBuildFile; fileRef = DA0000000000000000000010 /* Models/mlx-community:Qwen3-Embedding-0.6B-4bit-DWQ */; };
+		DA0000000000000000000009 /* Models/Qwen3-Embedding-0.6B-4bit-DWQ in Resources */ = {isa = PBXBuildFile; fileRef = DA0000000000000000000010 /* Models/Qwen3-Embedding-0.6B-4bit-DWQ */; };
 		DA0000000000000000000011 /* Models/miniCPM5_2B_MLX in Resources */ = {isa = PBXBuildFile; fileRef = DA0000000000000000000012 /* Models/miniCPM5_2B_MLX */; };
 		DA0000000000000000000013 /* Confidential in Resources */ = {isa = PBXBuildFile; fileRef = DA0000000000000000000014 /* Confidential */; };
 /* End PBXBuildFile section */
@@ -23,7 +23,7 @@
 /* Begin PBXFileReference section */
 		63951F4D30504E1C00B7D370 /* ios_llm */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = ios_llm; path = ..; sourceTree = "<group>"; };
 		63B9BFE13050447500FBB103 /* DocumentAssistantApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DocumentAssistantApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		DA0000000000000000000010 /* Models/mlx-community:Qwen3-Embedding-0.6B-4bit-DWQ */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "Models/mlx-community:Qwen3-Embedding-0.6B-4bit-DWQ"; sourceTree = SOURCE_ROOT; };
+		DA0000000000000000000010 /* Models/Qwen3-Embedding-0.6B-4bit-DWQ */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "Models/Qwen3-Embedding-0.6B-4bit-DWQ"; sourceTree = SOURCE_ROOT; };
 		DA0000000000000000000012 /* Models/miniCPM5_2B_MLX */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Models/miniCPM5_2B_MLX; sourceTree = SOURCE_ROOT; };
 		DA0000000000000000000014 /* Confidential */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Confidential; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
@@ -44,7 +44,7 @@
 				Models/miniCPM5_2B_MLX/README.md,
 				Models/miniCPM5_2B_MLX/tokenizer_config.json,
 				Models/miniCPM5_2B_MLX/tokenizer.json,
-				"Models/mlx-community:Qwen3-Embedding-0.6B-4bit-DWQ",
+				"Models/Qwen3-Embedding-0.6B-4bit-DWQ",
 				Models/README.txt,
 			);
 			target = 63B9BFE03050447500FBB103 /* DocumentAssistantApp */;
@@ -81,14 +81,6 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		631FA7FD305129D900D9AFAB /* Recovered References */ = {
-			isa = PBXGroup;
-			children = (
-				DA0000000000000000000010 /* Models/mlx-community:Qwen3-Embedding-0.6B-4bit-DWQ */,
-			);
-			name = "Recovered References";
-			sourceTree = "<group>";
-		};
 		63951F4C30504E1C00B7D370 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
@@ -101,11 +93,11 @@
 			isa = PBXGroup;
 			children = (
 				DA0000000000000000000012 /* Models/miniCPM5_2B_MLX */,
+				DA0000000000000000000010 /* Models/Qwen3-Embedding-0.6B-4bit-DWQ */,
 				DA0000000000000000000014 /* Confidential */,
 				63B9BFE33050447500FBB103 /* DocumentAssistantApp */,
 				63951F4C30504E1C00B7D370 /* Frameworks */,
 				63B9BFE23050447500FBB103 /* Products */,
-				631FA7FD305129D900D9AFAB /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -176,7 +168,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				DA0000000000000000000001 /* XCLocalSwiftPackageReference "../swift-tokenizers-mlx" */,
-				631FA70730507E0F00D9AFAB /* XCLocalSwiftPackageReference "../../ios_llm" */,
+				631FA70730507E0F00D9AFAB /* XCLocalSwiftPackageReference ".." */,
 				631FA7233050D71C00D9AFAB /* XCRemoteSwiftPackageReference "mlx-swift" */,
 				631FA7283050D74500D9AFAB /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
 			);
@@ -195,7 +187,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				DA0000000000000000000009 /* Models/mlx-community:Qwen3-Embedding-0.6B-4bit-DWQ in Resources */,
+				DA0000000000000000000009 /* Models/Qwen3-Embedding-0.6B-4bit-DWQ in Resources */,
 				DA0000000000000000000011 /* Models/miniCPM5_2B_MLX in Resources */,
 				DA0000000000000000000013 /* Confidential in Resources */,
 			);
@@ -344,6 +336,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = BoardIQ;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -377,6 +370,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = BoardIQ;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -423,9 +417,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		631FA70730507E0F00D9AFAB /* XCLocalSwiftPackageReference "../../ios_llm" */ = {
+		631FA70730507E0F00D9AFAB /* XCLocalSwiftPackageReference ".." */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../ios_llm;
+			relativePath = ..;
 		};
 		DA0000000000000000000001 /* XCLocalSwiftPackageReference "../swift-tokenizers-mlx" */ = {
 			isa = XCLocalSwiftPackageReference;

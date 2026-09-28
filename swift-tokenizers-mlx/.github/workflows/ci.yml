@@ -1,0 +1,39 @@
+name: CI
+
+on:
+    pull_request:
+        types: [opened, synchronize, reopened]
+    push:
+        branches: [main]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    build:
+        name: Build (macOS)
+        runs-on: macos-latest
+        steps:
+            - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+            - name: Build
+              run: swift build --build-tests
+
+    lint:
+        name: Lint
+        runs-on: macos-latest
+        steps:
+            - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+            - run: swift format lint --strict --recursive .
+
+            - name: Suggest fixes (if check fails)
+              if: failure()
+              run: |
+                  echo "### Here's how to fix the formatting locally:" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo '```bash' >> $GITHUB_STEP_SUMMARY
+                  echo "# Format all Swift files" >> $GITHUB_STEP_SUMMARY
+                  echo 'swift format -i --recursive .' >> $GITHUB_STEP_SUMMARY
+                  echo '```' >> $GITHUB_STEP_SUMMARY
