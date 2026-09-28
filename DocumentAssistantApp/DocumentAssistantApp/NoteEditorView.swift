@@ -31,14 +31,20 @@ struct NoteEditorView: View {
     init(document: Document,
          assistant: DocumentAssistant,
          onChanged: @escaping () -> Void,
-         onDelete: @escaping () -> Void) {
+         onDelete: @escaping () -> Void,
+         onRequestDeepSearch: ((String) -> Void)? = nil) {
         self.document = document
         self.assistant = assistant
         self.onChanged = onChanged
         self.onDelete = onDelete
+        self.onRequestDeepSearch = onRequestDeepSearch
         _draftTitle = State(initialValue: document.name)
         _draftText = State(initialValue: document.text)
     }
+
+    /// Asks the host (ContentView) to present the deep-search sheet, which lives
+    /// at the root so its results survive detail-pane swaps (see DocumentReaderView).
+    var onRequestDeepSearch: ((String) -> Void)? = nil
 
     private var trimmedTitle: String {
         let t = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -56,9 +62,23 @@ struct NoteEditorView: View {
         selectedText = nil
     }
 
-    @ViewBuilder private var factCheckButton: some View {
-        if allowFactCheck, let text = selectedText, !text.isEmpty {
-            FactCheckButton { requestFactCheck(text) }
+    /// Deep Search searches the whole on-device index (read-only), so it is
+    /// offered on every note regardless of category.
+    private func requestDeepSearch(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        onRequestDeepSearch?(trimmed)
+        selectedText = nil
+    }
+
+    @ViewBuilder private var selectionButtons: some View {
+        if let text = selectedText, !text.isEmpty {
+            HStack(spacing: 12) {
+                if allowFactCheck {
+                    FactCheckButton { requestFactCheck(text) }
+                }
+                DeepSearchButton { requestDeepSearch(text) }
+            }
         }
     }
 
@@ -115,7 +135,7 @@ struct NoteEditorView: View {
                 rendersMarkdown: true,
                 onSelectionChange: { selectedText = $0 }
             )
-            .overlay(alignment: .bottom) { factCheckButton }
+            .overlay(alignment: .bottom) { selectionButtons }
             .animation(.easeInOut(duration: 0.15), value: selectedText)
         }
     }

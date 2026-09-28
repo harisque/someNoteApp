@@ -81,9 +81,11 @@ public enum Stooq {
 public enum Yahoo {
     /// Parses `{"chart":{"result":[{"timestamp":[…],"indicators":{"quote":[{…}]}}]}}`
     /// into chronologically ascending `DataPoint`s. Yahoo emits parallel arrays with
-    /// `null`s for non-trading days; rows without a close are skipped. A missing or
-    /// errored chart yields an empty array rather than throwing, so the caller keeps
-    /// its previously stored snapshot.
+    /// `null`s for non-trading days; rows without a usable close are skipped — null, or
+    /// a non-positive/non-finite placeholder, which is how Yahoo briefly represents a
+    /// session whose exchange values it has not processed yet. A missing or errored
+    /// chart yields an empty array rather than throwing, so the caller keeps its
+    /// previously stored snapshot.
     public static func parseChartJSON(_ data: Data) -> [DataPoint] {
         guard
             let object = try? JSONSerialization.jsonObject(with: data),
@@ -114,8 +116,11 @@ public enum Yahoo {
         var points: [DataPoint] = []
         for (index, rawTimestamp) in rawTimestamps.enumerated() {
             guard let seconds = (rawTimestamp as? NSNumber)?.doubleValue else { continue }
-            let close = value(closes, index)
-            guard close != nil else { continue }   // skip non-trading / null-close rows
+            // Skip non-trading rows and Yahoo's "not yet processed" placeholders: the
+            // newest bar can appear with a null or zeroed close while the exchange's
+            // session values are still being finalized, and a 0.00 close must never reach
+            // the stored series or the live figures.
+            guard let close = value(closes, index), close.isFinite, close > 0 else { continue }
             points.append(DataPoint(
                 date: Date(timeIntervalSince1970: seconds),
                 open: value(opens, index), high: value(highs, index),

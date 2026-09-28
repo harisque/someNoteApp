@@ -22,11 +22,25 @@ struct ContentView: View {
     @State private var showTestMode = false
     @State private var documents: [Document] = []
     @State private var folders: [Folder] = []
+    /// Most-recently-opened document ids (MRU) and favorited ids, loaded from the
+    /// assistant's lightweight sidecar. Drive the per-category Recent/Favorites
+    /// sections in DocumentManagerView; virtual only (never move a doc's folder).
+    @State private var recents: [UUID] = []
+    @State private var favorites: [UUID] = []
     @State private var selectedDocumentID: UUID?
     @State private var focusCitation: Citation?
     @State private var showAssistant = false
     @State private var showLibrary = false
     @State private var openedDocumentID: UUID?
+    /// Deep-search sheet state lives at the root (not in the per-document reader)
+    /// so results survive detail-pane swaps: opening a hit replaces the searched
+    /// document, which used to destroy the reader-owned sheet and its results.
+    @State private var deepSearchRequest: DeepSearchRequest?
+    /// The most recent deep-search query, kept after the sheet closes so readers
+    /// can offer a way back to the results: tapping a hit from another file swaps
+    /// the detail pane, and the original entry point (that file's find-bar query
+    /// or selection) goes with it.
+    @State private var lastDeepSearchQuery: String?
     @State private var dataLinks: [DataLink] = []
     /// Regular (iPad): the data link shown in the detail pane, if any.
     @State private var selectedDataLinkID: UUID?
@@ -45,14 +59,23 @@ struct ContentView: View {
             )
             // Configure the live Data Link source and seed bundled descriptors
             // (idempotent by symbol) so Ask has structured data to cite.
-            await assistant.configureDataLinkSource(RemoteDataLinkSource())
+            // TEMPORARY: DemoBackfillSource wraps the real source to fill STAN.L's
+            // 2026-09-14 session, which Yahoo has not republished yet. Remove after the
+            // demo by reverting this line to `RemoteDataLinkSource()`.
+            await assistant.configureDataLinkSource(DemoBackfillSource(wrapped: RemoteDataLinkSource()))
             if let descriptors = bundledDataLinkDescriptors() {
                 try? await assistant.seedDataLinks(descriptors)
             }
             documents = await assistant.documents
             folders = await assistant.folders
             dataLinks = await assistant.listDataLinks()
+            recents = await assistant.recents
+            favorites = await assistant.favorites
             if selectedDocumentID == nil { selectedDocumentID = documents.first?.id }
+            // Warm the semantic index in the background (fire-and-forget) so the
+            // first Ask or Deep Search finds cached vectors instead of paying for
+            // a blocking whole-library embedding build.
+            await assistant.warmEmbeddingCache()
             // Best-effort refresh after the UI is populated; reload to pick up the new
             // last-refresh stamps. A failure simply keeps the seeded state.
             await assistant.refreshAllDataLinks()
@@ -60,6 +83,9 @@ struct ContentView: View {
         }
         .fullScreenCover(isPresented: $showTestMode) {
             TestModeView(coordinator: coordinator)
+        }
+        .sheet(item: $deepSearchRequest) { request in
+            DeepSearchSheet(query: request.text, assistant: assistant, onOpenCitation: focusInPlace)
         }
     }
 
@@ -71,6 +97,8 @@ struct ContentView: View {
                 assistant: assistant,
                 documents: documents,
                 folders: folders,
+                recents: recents,
+                favorites: favorites,
                 selection: $selectedDocumentID,
                 onOpenDocument: { selectedDocumentID = $0; selectedDataLinkID = nil },
                 onChanged: refreshDocuments,
@@ -92,7 +120,13 @@ struct ContentView: View {
                         onDocumentsChanged: refreshDocuments,
                         onRequestTestMode: { showTestMode = true }
                     )
-                    .frame(minWidth: 320, idealWidth: 380, maxWidth: .infinity, alignment: .topLeading)
+                    // The inspector column opens at a system-default width that ignores
+                    // minWidth/idealWidth on first presentation, and is narrower in
+                    // portrait. A minWidth above that default makes the frame overflow
+                    // the column and clip both edges, so keep the floor at zero and let
+                    // the (wrapping, flexible) panel fill exactly the column it is given;
+                    // maxWidth .infinity still lets the user drag it wider in landscape.
+                    .frame(minWidth: 0, idealWidth: 400, maxWidth: .infinity, alignment: .topLeading)
                 }
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
@@ -123,19 +157,57 @@ struct ContentView: View {
         }
     }
 
-    /// Routes a document to the note editor (AI Notes) or the reader.
+    /// Routes a document to the note editor (AI Notes) or the reader. Deep-search
+    /// results navigate through `focusInPlace`, which works in both layouts:
+    /// regular swaps the detail pane; compact pushes via `focusCitation`.
     @ViewBuilder private func readerOrEditor(for document: Document) -> some View {
-        if document.isNote {
-            NoteEditorView(
-                document: document,
-                assistant: assistant,
-                onChanged: refreshDocuments,
-                onDelete: { openedDocumentID = nil; refreshDocuments() }
-            )
-            .id(document.id)
-        } else {
-            DocumentReaderView(document: document, assistant: assistant, focusCitation: focusCitation)
+        Group {
+            if document.isNote {
+                NoteEditorView(
+                    document: document,
+                    assistant: assistant,
+                    onChanged: refreshDocuments,
+                    onDelete: { openedDocumentID = nil; refreshDocuments() },
+                    onRequestDeepSearch: requestDeepSearch
+                )
                 .id(document.id)
+            } else {
+                DocumentReaderView(document: document, assistant: assistant, focusCitation: focusCitation, onRequestDeepSearch: requestDeepSearch)
+                    .id(document.id)
+            }
+        }
+        .toolbar { reopenDeepSearchToolbar }
+        // Single choke point for "a document is on screen": records the open so the
+        // per-category Recent lists stay live. Keyed on id, so re-renders of the
+        // same document don't re-record or loop.
+        .task(id: document.id) {
+            await assistant.markDocumentOpened(document.id)
+            recents = await assistant.recents
+        }
+    }
+
+    /// Presents the root-owned deep-search sheet for a query coming from any
+    /// reader/editor (selection pill or find-bar button).
+    private func requestDeepSearch(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        lastDeepSearchQuery = trimmed
+        deepSearchRequest = DeepSearchRequest(text: trimmed)
+    }
+
+    /// Toolbar re-entry to the last deep-search results, shown on any document
+    /// once a search has run. Reopening re-runs the query (fast: exact scan plus
+    /// cached vectors) in the root-owned sheet.
+    @ToolbarContentBuilder private var reopenDeepSearchToolbar: some ToolbarContent {
+        if let query = lastDeepSearchQuery {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    deepSearchRequest = DeepSearchRequest(text: query)
+                } label: {
+                    Label("Deep Search Results", systemImage: "text.magnifyingglass")
+                }
+                .tint(Color("SCBlue"))
+            }
         }
     }
 
@@ -188,6 +260,8 @@ struct ContentView: View {
                     assistant: assistant,
                     documents: documents,
                     folders: folders,
+                    recents: recents,
+                    favorites: favorites,
                     selection: nil,
                     onOpenDocument: { openedDocumentID = $0 },
                     onChanged: refreshDocuments,
@@ -207,7 +281,9 @@ struct ContentView: View {
             }
             .navigationDestination(item: $focusCitation) { citation in
                 if let document = documents.first(where: { $0.id == citation.documentID }) {
-                    DocumentReaderView(document: document, assistant: assistant, focusCitation: citation)
+                    // Route through the shared builder so citation/deep-search opens
+                    // also record as "recent" and reuse its toolbar/task.
+                    readerOrEditor(for: document)
                 } else {
                     Text("The source document for this citation is no longer available.")
                         .padding().navigationTitle("Source")
@@ -234,6 +310,8 @@ struct ContentView: View {
             documents = await assistant.documents
             folders = await assistant.folders
             dataLinks = await assistant.listDataLinks()
+            recents = await assistant.recents
+            favorites = await assistant.favorites
             if let selected = selectedDocumentID, !documents.contains(where: { $0.id == selected }) {
                 selectedDocumentID = documents.first?.id
             }

@@ -6,14 +6,37 @@ import MLXLMTokenizers
 import DocumentAssistant
 import OSLog
 
-@MainActor
-final class QwenEmbeddingModel: DocumentEmbedder {
+/// On-device embedding model powering Deep Search's semantic pass.
+///
+/// This is an `actor`, not `@MainActor`: a first-run index build embeds every
+/// chunk back-to-back, and scheduling that on the main actor starves the UI and
+/// concentrates memory pressure on the main thread. `EmbedderModelContainer` is
+/// `Sendable` and serializes model access internally, so nothing is lost by
+/// running off-main.
+actor QwenEmbeddingModel: DocumentEmbedder {
     private let directory: URL
     private var container: EmbedderModelContainer?
+    /// Embeds since the last MLX cache clear. Long index builds accumulate
+    /// Metal buffers in the global cache; clearing periodically keeps the
+    /// working set flat so the app isn't jetsam-killed mid-build on device.
+    private var embedsSinceClear = 0
     private let logger = Logger(subsystem: "com.localtest.DocumentAssistantApp", category: "Embedding")
     init(directory: URL) { self.directory = directory }
     private func loaded() async throws -> EmbedderModelContainer {
         if let container { return container }
+        #if targetEnvironment(simulator)
+        // Same MLX/Metal limitation as the language model: this build aborts in
+        // Metal Device::Device() on the simulator, and a Swift catch does not
+        // intercept SIGABRT. Check before entering C++. Deep Search degrades to
+        // literal occurrences only when embedding is unavailable.
+        throw NSError(domain: "DocumentAssistant.Embedder", code: 1, userInfo: [
+            NSLocalizedDescriptionKey: "On-device embedding is unavailable in the iOS Simulator. Deep Search returns exact occurrences only."
+        ])
+        #else
+        // Cap the shared MLX Metal buffer cache before allocating weights. The
+        // LLM sets the same limit, but only when it loads first; a deep search
+        // before any Ask would otherwise run with the (large) default.
+        MLX.Memory.cacheLimit = 20 * 1024 * 1024
         logger.error("Loading embedding model from \(self.directory.path, privacy: .public)")
         print("[Embedding] Loading model from \(self.directory.path)")
         let started = Date()
@@ -22,12 +45,13 @@ final class QwenEmbeddingModel: DocumentEmbedder {
         logger.error("Embedding model loaded in \(Date().timeIntervalSince(started)) seconds")
         print("[Embedding] Model loaded")
         return value
+        #endif
     }
     func embed(_ text: String) async throws -> [Float] {
         let model = try await loaded()
         logger.error("Embedding chunk (\(text.count) characters)")
         print("[Embedding] Chunk \(text.count) characters")
-        return try await model.perform { context in
+        let result = try await model.perform { context in
             let tokenizer = context.tokenizer
             let ids = tokenizer.encode(text: String(text.prefix(1200)), addSpecialTokens: true)
             let length = min(max(ids.count, 8), 512)
@@ -39,5 +63,14 @@ final class QwenEmbeddingModel: DocumentEmbedder {
             output.eval()
             return output[0].asArray(Float.self)
         }
+        #if !targetEnvironment(simulator)
+        embedsSinceClear += 1
+        if embedsSinceClear >= 16 {
+            MLX.Memory.clearCache()
+            embedsSinceClear = 0
+            logger.notice("MLX cache cleared during embedding; active bytes: \(MLX.Memory.activeMemory)")
+        }
+        #endif
+        return result
     }
 }

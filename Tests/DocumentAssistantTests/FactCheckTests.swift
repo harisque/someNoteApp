@@ -114,4 +114,16 @@ struct FactCheckTests {
         let prompt = FactCheckPrompt.build(claim: "Something.", evidence: [])
         #expect(prompt.contains("No external evidence was found"))
     }
+
+    @Test("Prompt requires an English assessment and repeats it after the evidence")
+    func promptLanguage() {
+        let prompt = FactCheckPrompt.build(
+            claim: "地球是平的。",
+            evidence: [WebResult(title: "T", snippet: "s", url: "https://e.com")]
+        )
+        // Stated with the instructions and repeated as the closing line, so a
+        // non-English claim can't set the assessment's language.
+        #expect(prompt.contains("Write the whole assessment in English"))
+        #expect(prompt.hasSuffix("Respond in English now, beginning with the \"**Verdict: X**\" line."))
+    }
 }

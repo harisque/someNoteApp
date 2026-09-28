@@ -12,6 +12,11 @@ struct DocumentReaderView: View {
     let document: Document
     let assistant: DocumentAssistant
     var focusCitation: Citation? = nil
+    /// Asks the host (ContentView) to present the deep-search sheet for a query.
+    /// The sheet lives at the root so its results survive detail-pane swaps:
+    /// a reader-owned sheet died with this view when opening a result replaced
+    /// the document being searched. Nil disables the deep-search affordances.
+    var onRequestDeepSearch: ((String) -> Void)? = nil
 
     @State private var sourceURL: URL?
     @State private var highlightText: String?
@@ -41,13 +46,27 @@ struct DocumentReaderView: View {
         selectedText = nil
     }
 
-    /// A floating Fact Check button shown when text is selected in a personal
-    /// document (PDF or text). The native edit call-out is suppressed in the text
-    /// readers and can't be extended on iOS 26, so this button is the single,
-    /// reliable selection affordance across all reader types.
-    @ViewBuilder private var factCheckButton: some View {
-        if allowFactCheck, let text = selectedText, !text.isEmpty {
-            FactCheckButton { requestFactCheck(text) }
+    /// Deep Search runs across every document (read-only), so it is offered in
+    /// all categories, unlike the personal-only Fact Check.
+    private func requestDeepSearch(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        onRequestDeepSearch?(trimmed)
+        selectedText = nil
+    }
+
+    /// Floating selection pills shown when text is selected (PDF or text).
+    /// The native edit call-out is suppressed in the text readers and can't be
+    /// extended on iOS 26, so these buttons are the single, reliable selection
+    /// affordance across all reader types.
+    @ViewBuilder private var selectionButtons: some View {
+        if let text = selectedText, !text.isEmpty {
+            HStack(spacing: 12) {
+                if allowFactCheck {
+                    FactCheckButton { requestFactCheck(text) }
+                }
+                DeepSearchButton { requestDeepSearch(text) }
+            }
         }
     }
 
@@ -84,7 +103,7 @@ struct DocumentReaderView: View {
         .searchable(text: $search, prompt: "Find in document")
         .onChange(of: search) { _, value in updateSearch(value) }
         .task(id: focusKey) { await resolve() }
-        .overlay(alignment: .bottom) { factCheckButton }
+        .overlay(alignment: .bottom) { selectionButtons }
         .animation(.easeInOut(duration: 0.15), value: selectedText)
         .sheet(item: $factCheckRequest) { request in
             FactCheckSheet(claim: request.text, assistant: assistant)
@@ -100,7 +119,8 @@ struct DocumentReaderView: View {
     private var totalMatches: Int { isPDF ? pdfMatchCount : textMatches.count }
     private var currentMatchIndex: Int { isPDF ? pdfMatchIndex : textMatchIndex }
 
-    /// A find bar that surfaces the match count and lets the user step through
+    /// A find bar that surfaces the match count, offers a cross-document Deep
+    /// Search for the current term, and lets the user step through in-document
     /// results, so searching visibly returns something instead of silently
     /// highlighting only the first hit.
     @ViewBuilder private var findBar: some View {
@@ -112,6 +132,23 @@ struct DocumentReaderView: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .monospacedDigit()
                 Spacer()
+                Button {
+                    // Read the live `$search` binding on the next run-loop turn,
+                    // not the render-time `trimmedSearch` snapshot: tapping this
+                    // button resigns the search field, and iOS commits any
+                    // uncommitted autocorrect/marked text only at that moment —
+                    // reading the captured snapshot races the commit and can
+                    // deep-search just the first few typed characters.
+                    DispatchQueue.main.async {
+                        requestDeepSearch($search.wrappedValue)
+                    }
+                } label: {
+                    Label("Deep Search", systemImage: "text.magnifyingglass")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(Color("SCBlue"))
                 Button { previousMatch() } label: { Image(systemName: "chevron.up") }
                     .disabled(totalMatches == 0)
                 Button { nextMatch() } label: { Image(systemName: "chevron.down") }

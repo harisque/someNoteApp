@@ -1,10 +1,10 @@
 import Foundation
 
 /// Which bundled model the assistant loads. The raw value is the model's folder
-/// name inside the app bundle. Both folders stay bundled in Phase 1, so either
-/// case can be selected from `ModelConfig.json` with no project change.
+/// name inside the app bundle. Qwen3.5-4B is no longer bundled (it pushed the
+/// app past 4.5 GB), so only MiniCPM5 can be selected; a stray `"qwen"` in
+/// `ModelConfig.json` falls back to the default.
 enum BundledModel: String, CaseIterable, Identifiable {
-    case qwen = "Qwen3.5-4B"
     case miniCPM5 = "miniCPM5_2B_MLX"
 
     var id: String { rawValue }
@@ -12,7 +12,6 @@ enum BundledModel: String, CaseIterable, Identifiable {
     /// Human-readable label for pickers and metrics.
     var displayName: String {
         switch self {
-        case .qwen: return "Qwen3.5-4B"
         case .miniCPM5: return "MiniCPM5-2B"
         }
     }

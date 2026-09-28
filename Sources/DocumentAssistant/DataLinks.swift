@@ -77,16 +77,43 @@ extension DocumentAssistant {
 
     /// Bounds and stores a fetched series, stamps `lastRefreshedAt`, and re-projects the
     /// OKF bundle (via `persist`) so Ask can cite the refreshed data.
+    ///
+    /// The incoming series is merged with what is already stored, keyed by trading day, so
+    /// a refresh can never roll the data backwards. A source quirk — Yahoo briefly
+    /// republishing the newest session as an empty placeholder the parser drops, or a
+    /// partial response — must not erase a bar captured on an earlier refresh or revert the
+    /// series to an older "as of" date. See `mergePointsByDay`.
     func storeSnapshot(linkID: UUID, points: [DataPoint]) throws {
         guard let index = dataLinks.firstIndex(where: { $0.id == linkID }) else { return }
-        let sorted = points.sorted { $0.date < $1.date }
-        let bounded = Array(sorted.suffix(DataLinkLimits.maxSnapshotPoints))
+        let merged = mergePointsByDay(existing: dataSnapshots[linkID]?.points ?? [], incoming: points)
+        let bounded = Array(merged.suffix(DataLinkLimits.maxSnapshotPoints))
         let snapshot = DataSnapshot(linkID: linkID, points: bounded, fetchedAt: Date())
         dataSnapshots[linkID] = snapshot
         dataLinks[index].lastRefreshedAt = snapshot.fetchedAt
         try FileManager.default.createDirectory(at: dataSnapshotsDirectory, withIntermediateDirectories: true)
         try JSONEncoder().encode(snapshot).write(to: dataSnapshotURL(linkID), options: .atomic)
         try persist()
+    }
+
+    /// Merges stored and freshly fetched points by trading day (UTC), returning them
+    /// chronologically ascending and de-duplicated to one point per day. For each day the
+    /// incoming point wins when present, so a republished official/corrected session value
+    /// supersedes what was captured live earlier; a day missing from the incoming series
+    /// (a placeholder the parser dropped, or a partial response) keeps its previously
+    /// stored point. The result therefore never regresses to an older latest date and never
+    /// loses a bar we already captured.
+    private func mergePointsByDay(existing: [DataPoint], incoming: [DataPoint]) -> [DataPoint] {
+        // Local Calendar: a value type, so no shared-state/Sendable concern under Swift 6.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        func dayKey(_ point: DataPoint) -> DateComponents {
+            calendar.dateComponents([.year, .month, .day], from: point.date)
+        }
+        var merged: [DateComponents: DataPoint] = [:]
+        merged.reserveCapacity(existing.count + incoming.count)
+        for point in existing { merged[dayKey(point)] = point }
+        for point in incoming { merged[dayKey(point)] = point }   // incoming wins per trading day
+        return merged.values.sorted { $0.date < $1.date }
     }
 
     // MARK: - Refresh

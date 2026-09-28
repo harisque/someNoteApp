@@ -147,6 +147,30 @@ final class QwenMLXLanguageModel: LanguageModel {
     }
 }
 
+/// Exact prompt-token counting for the Ask packer, using the bundled LLM's
+/// tokenizer. Loads only `tokenizer.json` via swift-tokenizers (no MLX/Metal),
+/// so it works before the language model is loaded and never contends for model
+/// memory. Returns nil on load failure, degrading packing to the package's
+/// conservative character estimate instead of failing the question.
+actor QwenTokenCounter: PromptTokenCounter {
+    private let directory: URL
+    private var tokenizer: (any MLXLMCommon.Tokenizer)?
+    private let logger = Logger(subsystem: "com.localtest.DocumentAssistantApp", category: "Inference")
+    init(directory: URL) { self.directory = directory }
+    func tokenCount(_ text: String) async -> Int? {
+        do {
+            if tokenizer == nil {
+                tokenizer = try await TokenizersLoader().load(from: directory)
+            }
+            guard let tokenizer else { return nil }
+            return tokenizer.encode(text: text, addSpecialTokens: false).count
+        } catch {
+            logger.error("Token counter unavailable: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+}
+
 @main
 struct DocumentAssistantApp: App {
     private let assistant: DocumentAssistant
@@ -159,12 +183,23 @@ struct DocumentAssistantApp: App {
         // One shared normal-mode model, also owned by the coordinator so Test Mode
         // can offload it on enter and warm it back up on exit.
         let normalModel = QwenMLXLanguageModel(directory: directory, config: config)
+        // On-device embedder powering Deep Search's semantic pass. The 0.6B 4-bit
+        // embedding model is bundled alongside the LLMs and lazily loaded on first
+        // use; its small footprint lets it coexist with the active language model.
+        let embeddingDirectory = Bundle.main.bundleURL.appendingPathComponent(
+            "mlx-community:Qwen3-Embedding-0.6B-4bit-DWQ", isDirectory: true
+        )
         assistant = DocumentAssistant(
             model: normalModel,
             store: support.appendingPathComponent("catalog.json"),
+            embedder: QwenEmbeddingModel(directory: embeddingDirectory),
             legacyStore: FileManager.default.temporaryDirectory.appendingPathComponent("documents.json"),
             // Link retrieval packing to the configured context window: the excerpt
             // budget is derived from contextWindowTokens minus the reserved answer.
+            // Packing measures real tokens with the LLM's tokenizer, so the prompt
+            // provably fits the hard context guard instead of trusting a
+            // characters-per-token estimate.
+            tokenCounter: QwenTokenCounter(directory: directory),
             promptTokenBudget: config.contextWindowTokens,
             reservedAnswerTokens: config.maxOutputTokens
         )

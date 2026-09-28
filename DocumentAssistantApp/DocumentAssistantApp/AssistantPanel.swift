@@ -28,7 +28,15 @@ struct AssistantPanel: View {
     @State private var isGenerating = false
     @State private var generationTask: Task<Void, Never>?
     @State private var activity: [ActivityStep] = []
+    /// Citations the answer actually used (a subset of `packedCitations`). This is
+    /// what the chip row and a saved note list, so unused evidence that merely fit
+    /// in the prompt is no longer offered for browsing.
     @State private var answerCitations: [Citation] = []
+    /// Every excerpt packed into the prompt, kept for status counts and for
+    /// mapping a used citation back to the `[n]` number the answer cited.
+    @State private var packedCitations: [Citation] = []
+    /// Candidates surviving hybrid fusion, reported by the ranking stage.
+    @State private var candidateCount = 0
     /// Scope of the next question: ids of the chosen documents and/or Data Links.
     /// Empty means "all sources" (the default).
     @State private var scopeIDs: Set<UUID> = []
@@ -278,7 +286,7 @@ struct AssistantPanel: View {
                 ForEach(Array(answerCitations.enumerated()), id: \.element.id) { index, citation in
                     Button { onOpenCitation(citation) } label: {
                         Label {
-                            Text("Excerpt \(index + 1)").bold()
+                            Text("Excerpt \(excerptNumber(for: citation, fallback: index + 1))").bold()
                                 + Text(" · \(citationLabel(citation))")
                         } icon: {
                             Image(systemName: "doc.text.magnifyingglass")
@@ -291,6 +299,14 @@ struct AssistantPanel: View {
                 }
             }
         }
+    }
+
+    /// The number the answer cited this source as. Prompt excerpts are numbered by
+    /// packed order, so the label has to come from `packedCitations` rather than
+    /// the (shorter) used list — otherwise citing `[3]` and `[7]` would display as
+    /// "Excerpt 1" and "Excerpt 2".
+    private func excerptNumber(for citation: Citation, fallback: Int) -> Int {
+        packedCitations.firstIndex(of: citation).map { $0 + 1 } ?? fallback
     }
 
     @ViewBuilder private var saveToNoteButton: some View {
@@ -324,6 +340,8 @@ struct AssistantPanel: View {
     }
 
     /// One-click starter prompts. Tapping sends immediately against the current scope.
+    /// Laid out with a wrapping flow so every chip stays fully readable at narrow
+    /// inspector widths (a horizontal scroller clipped the trailing chips).
     private let quickPrompts = [
         "Summarize this document",
         "List key risks",
@@ -332,25 +350,23 @@ struct AssistantPanel: View {
     ]
 
     private var quickPromptBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(quickPrompts, id: \.self) { prompt in
-                    Button {
-                        query = prompt
-                        send()
-                    } label: {
-                        Text(prompt)
-                            .font(.caption)
-                            .lineLimit(1)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(Color("SCBlue").opacity(0.12), in: Capsule())
-                            .overlay(Capsule().strokeBorder(Color("SCBlue").opacity(0.35), lineWidth: 1))
-                            .foregroundStyle(Color("SCBlue"))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isGenerating)
+        FlowLayout(spacing: 8) {
+            ForEach(quickPrompts, id: \.self) { prompt in
+                Button {
+                    query = prompt
+                    send()
+                } label: {
+                    Text(prompt)
+                        .font(.caption)
+                        .lineLimit(1)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(Color("SCBlue").opacity(0.12), in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color("SCBlue").opacity(0.35), lineWidth: 1))
+                        .foregroundStyle(Color("SCBlue"))
                 }
+                .buttonStyle(.plain)
+                .disabled(isGenerating)
             }
         }
     }
@@ -400,7 +416,7 @@ struct AssistantPanel: View {
             lines.append("")
             lines.append("### Sources")
             for (index, citation) in answerCitations.enumerated() {
-                lines.append("- Excerpt \(index + 1): \(citationLabel(citation))")
+                lines.append("- Excerpt \(excerptNumber(for: citation, fallback: index + 1)): \(citationLabel(citation))")
             }
         }
         return lines.joined(separator: "\n")
@@ -429,6 +445,8 @@ struct AssistantPanel: View {
         askedQuestion = question
         response = ""
         answerCitations = []
+        packedCitations = []
+        candidateCount = 0
         errorMessage = nil
         activity = []
         isGenerating = true
@@ -441,8 +459,15 @@ struct AssistantPanel: View {
                     case .stage(let stage):
                         applyStage(stage)
                     case .citations(let citations):
+                        // Packed evidence: counted in the status feed, listed only if used.
+                        packedCitations = citations
+                    case .usedCitations(let citations):
                         answerCitations = citations
-                        if let last = activity.indices.last { activity[last].detail = "Found \(citations.count) source(s)" }
+                        if let i = activity.firstIndex(where: { $0.id == "generate" }) {
+                            activity[i].detail = citations.isEmpty
+                                ? nil
+                                : "Cited \(citations.count) of \(packedCitations.count) source(s)"
+                        }
                     case .token(let token):
                         modelWarmedUp = true
                         if let i = activity.firstIndex(where: { $0.id == "generate" }) { activity[i].label = "Generating answer…" }
@@ -467,10 +492,27 @@ struct AssistantPanel: View {
         switch stage {
         case .searching:
             advance("search", "Searching concepts…")
+        case .ranking(let lexical, let semantic, let fused, let semanticAvailable):
+            // Makes the hybrid pipeline visible: the semantic pass and RRF fusion
+            // used to happen between two rows with nothing on screen.
+            candidateCount = fused
+            advance(
+                "rank",
+                semanticAvailable ? "Ranking matches…" : "Ranking matches (keyword only)",
+                detail: semanticAvailable
+                    ? "\(lexical) keyword · \(semantic) semantic → \(fused) candidates"
+                    : "\(lexical) keyword matches"
+            )
         case .readingSources(let count):
             advance("read", count == 1 ? "Reading 1 source" : "Reading \(count) sources")
         case .composingPrompt(let count):
-            advance("compose", "Composing prompt from \(count) excerpt(s)")
+            advance(
+                "compose",
+                "Composing prompt",
+                detail: candidateCount > 0
+                    ? "\(count) excerpt(s) from \(candidateCount) candidate(s)"
+                    : "\(count) excerpt(s)"
+            )
         case .generating:
             advance("generate", modelWarmedUp ? "Generating answer…" : "Starting on-device model…")
         case .finished:
@@ -485,5 +527,46 @@ struct AssistantPanel: View {
 
     private func finishAll() {
         for i in activity.indices { activity[i].state = .done }
+    }
+}
+
+/// Greedy left-to-right flow layout: children that no longer fit on the current
+/// row wrap to the next one, so chip rows never get clipped by a narrow container.
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > maxWidth {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: maxWidth == .infinity ? x : maxWidth, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }

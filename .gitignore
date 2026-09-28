@@ -1,6 +1,10 @@
 # macOS
 .DS_Store
 
+# Local scratch files
+.tmp_frames/
+*.HEIC
+
 # Build artifacts
 .build/
 .swiftpm/

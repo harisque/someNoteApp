@@ -132,7 +132,7 @@ struct TestModeView: View {
                 }
                 .disabled(isRunning)
 
-                Text("On: the model reasons in a `<think>` block first (better for math/code, slower, uses more of the output budget). Honored by both MiniCPM5 and Qwen3.")
+                Text("On: the model reasons in a `<think>` block first (better for math/code, slower, uses more of the output budget). Honored by MiniCPM5's chat template.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
 

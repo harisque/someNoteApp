@@ -207,7 +207,10 @@ public enum FactCheckPrompt {
 
     /// Composes the analysis prompt from the claim and the gathered evidence. The
     /// model is told to open with an explicit verdict line, cite evidence by number,
-    /// avoid inventing facts, and admit when evidence is insufficient.
+    /// avoid inventing facts, and admit when evidence is insufficient. The English
+    /// output rule is stated up front and repeated as the closing line: claims are
+    /// selected from user documents, so a non-English claim would otherwise pull
+    /// the assessment into that language.
     public static func build(
         claim: String,
         evidence: [WebResult],
@@ -219,6 +222,7 @@ public enum FactCheckPrompt {
         lines.append("You are a meticulous fact-checker. Assess the CLAIM using ONLY the numbered WEB EVIDENCE below.")
         lines.append("Begin with a single verdict line exactly in the form \"**Verdict: X**\" where X is one of: Supported, Contradicted, Mixed, Insufficient evidence.")
         lines.append("Then explain briefly, referencing evidence by number (for example [1]). Do not invent facts beyond the evidence. If the evidence is thin or conflicting, say so.")
+        lines.append("Write the whole assessment in English, whatever language the claim or the evidence is in.")
         lines.append("")
         lines.append("CLAIM:")
         lines.append(trimmedClaim.isEmpty ? "(none)" : trimmedClaim)
@@ -235,6 +239,8 @@ public enum FactCheckPrompt {
                 lines.append("    Source: \(item.url)")
             }
         }
+        lines.append("")
+        lines.append("Respond in English now, beginning with the \"**Verdict: X**\" line.")
         return lines.joined(separator: "\n")
     }
 

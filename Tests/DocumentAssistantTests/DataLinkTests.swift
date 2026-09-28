@@ -86,6 +86,22 @@ struct DataLinkTests {
         #expect(Yahoo.parseChartJSON(Data("not json".utf8)).isEmpty)
     }
 
+    @Test("Yahoo parser skips placeholder rows with a zero close, keeping only published sessions")
+    func yahooPlaceholderRows() throws {
+        // Yahoo briefly publishes a session it has not processed yet as a placeholder:
+        // open/high/low/volume are zeroed and close is 0 (or null). A 0.00 close must
+        // never reach the stored series or the live figures.
+        let json = """
+        {"chart":{"result":[{"timestamp":[1700006400,1700092800],
+        "indicators":{"quote":[{"open":[100.0,0.0],"high":[110.0,0.0],
+        "low":[95.0,0.0],"close":[105.0,0.0],"volume":[1000,0]}]}}],
+        "error":null}}
+        """
+        let points = Yahoo.parseChartJSON(Data(json.utf8))
+        #expect(points.count == 1)                    // zero-close placeholder -> skipped
+        #expect(points.first?.close == 105)
+    }
+
     // MARK: - Seeding
 
     @Test("seedDataLinks is idempotent by symbol (case-insensitive) and updates changed fields")
@@ -137,6 +153,39 @@ struct DataLinkTests {
         #expect(snapshot.points.last?.close == Double(total - 1))
         #expect(snapshot.points.first?.close == Double(total - DataLinkLimits.maxSnapshotPoints))
         #expect((await assistant.dataLink(id: id))?.lastRefreshedAt != nil)
+    }
+
+    @Test("A refresh returning older-ending data never rolls the series back")
+    func refreshNeverRegresses() async throws {
+        let root = try workspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let assistant = makeAssistant(root)
+        try await assistant.seedDataLinks([DataLinkDescriptor(name: "M", symbol: "M.UK")])
+        let id = try #require((await assistant.listDataLinks()).first?.id)
+
+        // An earlier refresh captured a newer session (e.g. Monday, fetched live yesterday).
+        try await assistant.storeSnapshot(linkID: id, points: [
+            DataPoint(date: day(0), close: 100),
+            DataPoint(date: day(1), close: 105),
+            DataPoint(date: day(2), close: 110),   // newest captured session
+        ])
+        #expect((await assistant.figures(for: id)).latestClose == 110)
+
+        // The source now returns a series ending a day earlier (its newest session is an
+        // unpublished placeholder the parser dropped) and corrects an older day.
+        try await assistant.storeSnapshot(linkID: id, points: [
+            DataPoint(date: day(0), close: 101),   // corrected older value -> incoming wins
+            DataPoint(date: day(1), close: 105),
+        ])
+
+        let snapshot = try #require(await assistant.snapshot(for: id))
+        // The newest captured session (day 2) is preserved: no regression to an older date.
+        #expect(snapshot.points.count == 3)
+        #expect(snapshot.points.last?.close == 110)
+        // The overlapping older day took the freshly fetched (corrected) value.
+        #expect(snapshot.points.first?.close == 101)
+        #expect((await assistant.figures(for: id)).latestClose == 110)
+        #expect((await assistant.figures(for: id)).asOf == day(2))
     }
 
     @Test("Data links and snapshots persist and reload in a fresh assistant instance")

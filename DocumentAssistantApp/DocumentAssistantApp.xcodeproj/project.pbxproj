@@ -14,7 +14,6 @@
 		631FA72C3050D74500D9AFAB /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 631FA72B3050D74500D9AFAB /* MLXLMCommon */; };
 		631FA72E3050D74500D9AFAB /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = 631FA72D3050D74500D9AFAB /* MLXVLM */; };
 		DA0000000000000000000003 /* MLXLMTokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = DA0000000000000000000002 /* MLXLMTokenizers */; };
-		DA0000000000000000000004 /* Models/Qwen3.5-4B in Resources */ = {isa = PBXBuildFile; fileRef = DA0000000000000000000005 /* Models/Qwen3.5-4B */; };
 		DA0000000000000000000007 /* MLXEmbedders in Frameworks */ = {isa = PBXBuildFile; productRef = DA0000000000000000000008 /* MLXEmbedders */; };
 		DA0000000000000000000009 /* Models/mlx-community:Qwen3-Embedding-0.6B-4bit-DWQ in Resources */ = {isa = PBXBuildFile; fileRef = DA0000000000000000000010 /* Models/mlx-community:Qwen3-Embedding-0.6B-4bit-DWQ */; };
 		DA0000000000000000000011 /* Models/miniCPM5_2B_MLX in Resources */ = {isa = PBXBuildFile; fileRef = DA0000000000000000000012 /* Models/miniCPM5_2B_MLX */; };
@@ -24,7 +23,6 @@
 /* Begin PBXFileReference section */
 		63951F4D30504E1C00B7D370 /* ios_llm */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = ios_llm; path = ..; sourceTree = "<group>"; };
 		63B9BFE13050447500FBB103 /* DocumentAssistantApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DocumentAssistantApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		DA0000000000000000000005 /* Models/Qwen3.5-4B */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "Models/Qwen3.5-4B"; sourceTree = SOURCE_ROOT; };
 		DA0000000000000000000010 /* Models/mlx-community:Qwen3-Embedding-0.6B-4bit-DWQ */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "Models/mlx-community:Qwen3-Embedding-0.6B-4bit-DWQ"; sourceTree = SOURCE_ROOT; };
 		DA0000000000000000000012 /* Models/miniCPM5_2B_MLX */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Models/miniCPM5_2B_MLX; sourceTree = SOURCE_ROOT; };
 		DA0000000000000000000014 /* Confidential */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Confidential; sourceTree = SOURCE_ROOT; };
@@ -35,6 +33,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Models/.DS_Store,
+				Models/Qwen3.5-4B,
 				Models/miniCPM5_2B_MLX/chat_template.jinja,
 				Models/miniCPM5_2B_MLX/config.json,
 				Models/miniCPM5_2B_MLX/generation_config.json,
@@ -101,7 +100,6 @@
 		63B9BFD83050447500FBB103 = {
 			isa = PBXGroup;
 			children = (
-				DA0000000000000000000005 /* Models/Qwen3.5-4B */,
 				DA0000000000000000000012 /* Models/miniCPM5_2B_MLX */,
 				DA0000000000000000000014 /* Confidential */,
 				63B9BFE33050447500FBB103 /* DocumentAssistantApp */,
@@ -197,7 +195,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				DA0000000000000000000004 /* Models/Qwen3.5-4B in Resources */,
 				DA0000000000000000000009 /* Models/mlx-community:Qwen3-Embedding-0.6B-4bit-DWQ in Resources */,
 				DA0000000000000000000011 /* Models/miniCPM5_2B_MLX in Resources */,
 				DA0000000000000000000013 /* Confidential in Resources */,

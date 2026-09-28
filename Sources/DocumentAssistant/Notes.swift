@@ -23,6 +23,8 @@ extension DocumentAssistant {
         documents.append(note)
         try await rebuildIndex(for: note)
         try persist()
+        // Warm the semantic index in the background (see `importDocument`).
+        startBackgroundEmbedding(for: note.id)
         return note.id
     }
 
@@ -34,6 +36,9 @@ extension DocumentAssistant {
         documents[idx].indexedAt = Date()
         try await rebuildIndex(for: documents[idx])
         try persist()
+        // Re-embed the regenerated chunks in the background; stale vectors from
+        // the previous revision are pruned at the start of the job.
+        startBackgroundEmbedding(for: documents[idx].id)
     }
 
     /// Generates a concise note title from a question. Tries a short on-device
@@ -48,13 +53,15 @@ extension DocumentAssistant {
 
     /// Asks the model for a very short title, bounded by length and elapsed time
     /// so a slow or verbose generation cannot stall saving. Returns nil on any
-    /// failure or empty result, signaling the caller to use the heuristic.
+    /// failure or empty result, signaling the caller to use the heuristic. Titles
+    /// are always English so the note list reads consistently even when the
+    /// question (or the documents behind it) is in another language.
     private func modelTitle(for question: String) async -> String? {
         let prompt = """
         Write a short note title for this question.
-        Rules: at most 6 words, title case, no quotes, no trailing punctuation, output only the title.
+        Rules: at most 6 words, title case, in English, no quotes, no trailing punctuation, output only the title.
         Question: \(question)
-        Title:
+        Title (in English):
         """
         var out = ""
         let start = Date()

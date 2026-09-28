@@ -25,6 +25,12 @@ struct DocumentManagerView: View {
     let assistant: DocumentAssistant
     let documents: [Document]
     let folders: [Folder]
+    /// Most-recently-opened document ids (MRU) and favorited ids, supplied by the
+    /// host from the assistant's sidecar. Drive the per-category Recent/Favorites
+    /// sections. Virtual groupings: a doc still renders in its real folder below and
+    /// its `folderID`/`category` never change.
+    var recents: [UUID] = []
+    var favorites: [UUID] = []
     /// Non-nil on iPad (drives the detail pane); nil on iPhone (rows open directly).
     var selection: Binding<UUID?>?
     var onOpenDocument: (UUID) -> Void
@@ -118,6 +124,9 @@ struct DocumentManagerView: View {
             .padding(.top, 10)
             .padding(.bottom, 4)
 
+            recentRows(category)
+            favoritesRows(category)
+
             ForEach(documents(in: category, folderID: nil)) { doc in docRow(doc, nested: false) }
 
             aiNotesRows(category)
@@ -138,6 +147,42 @@ struct DocumentManagerView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.bottom, 6)
         .background(Self.cardTint, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    /// The per-category "Recent" section: a foldable chevron header and up to
+    /// `DocumentAssistant.recentDisplayCount` most-recently-opened docs of this
+    /// category. Virtual — the same docs still appear in their real folder below.
+    @ViewBuilder private func recentRows(_ category: DocumentCategory) -> some View {
+        let key = "recent-\(category.rawValue)"
+        let items = recentDocuments(in: category)
+        folderHeaderRow("Recent", icon: "clock.arrow.circlepath", key: key, folder: nil)
+        if !collapsed.contains(key) {
+            if items.isEmpty {
+                Text("Documents you open appear here.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .padding(.leading, 28).padding(.vertical, 6)
+            } else {
+                ForEach(items) { doc in docRow(doc, nested: true) }
+            }
+        }
+    }
+
+    /// The per-category "Favorites" section: a foldable chevron header and every
+    /// favorited doc of this category, in the order pinned. Virtual — pinning never
+    /// moves the file out of its real folder.
+    @ViewBuilder private func favoritesRows(_ category: DocumentCategory) -> some View {
+        let key = "favorites-\(category.rawValue)"
+        let items = favoriteDocuments(in: category)
+        folderHeaderRow("Favorites", icon: "star.fill", key: key, folder: nil)
+        if !collapsed.contains(key) {
+            if items.isEmpty {
+                Text("Tap the star on a document to pin it here.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .padding(.leading, 28).padding(.vertical, 6)
+            } else {
+                ForEach(items) { doc in docRow(doc, nested: true) }
+            }
+        }
     }
 
     /// The permanent AI Notes system folder for a category: a foldable chevron
@@ -254,26 +299,38 @@ struct DocumentManagerView: View {
 
     @ViewBuilder private func docRow(_ doc: Document, nested: Bool) -> some View {
         let isSelected = selection?.wrappedValue == doc.id
-        Button { onOpenDocument(doc.id) } label: {
-            HStack(spacing: 6) {
-                Label(doc.name, systemImage: icon(for: doc))
-                    .lineLimit(1)
-                if doc.category == .confidential && !doc.isNote {
+        let isFavorite = favorites.contains(doc.id)
+        HStack(spacing: 6) {
+            Button { onOpenDocument(doc.id) } label: {
+                HStack(spacing: 6) {
+                    Label(doc.name, systemImage: icon(for: doc))
+                        .lineLimit(1)
+                    if doc.category == .confidential && !doc.isNote {
+                        Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary)
+                    }
                     Spacer()
-                    Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary)
                 }
+                .contentShape(Rectangle())
             }
-            .padding(.leading, nested ? 28 : 12)
-            .padding(.trailing, 12)
-            .padding(.vertical, 8)
+            .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                isSelected ? Self.selectionTint : Color.clear,
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-            )
-            .contentShape(Rectangle())
+            // Inline favorite toggle. A sibling button (not nested inside the open
+            // button) so both hit areas stay reliable; offered for every category,
+            // Confidential included, because pinning is metadata, not an edit.
+            Button { toggleFavorite(doc) } label: {
+                Image(systemName: isFavorite ? "star.fill" : "star")
+                    .foregroundStyle(isFavorite ? Color("SCBlue") : Color.secondary)
+            }
+            .buttonStyle(.borderless)
         }
-        .buttonStyle(.plain)
+        .padding(.leading, nested ? 28 : 12)
+        .padding(.trailing, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            isSelected ? Self.selectionTint : Color.clear,
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
         .contextMenu { docMenu(doc) }
     }
 
@@ -283,6 +340,12 @@ struct DocumentManagerView: View {
 
     @ViewBuilder private func docMenu(_ doc: Document) -> some View {
         Button { onOpenDocument(doc.id) } label: { Label("Open", systemImage: "arrow.up.forward.square") }
+        // Favorite applies to every doc in both categories (metadata, not a move),
+        // so it precedes the note/personal branching that gates edit/delete/move.
+        Button { toggleFavorite(doc) } label: {
+            Label(favorites.contains(doc.id) ? "Remove from Favorites" : "Add to Favorites",
+                  systemImage: favorites.contains(doc.id) ? "star.slash" : "star")
+        }
         if doc.isNote {
             // Notes are editable/deletable in both categories but never movable.
             Button(role: .destructive) { delete(doc) } label: { Label("Delete", systemImage: "trash") }
@@ -324,6 +387,21 @@ struct DocumentManagerView: View {
 
     private func notes(in category: DocumentCategory) -> [Document] {
         documents.filter { $0.category == category && $0.isNote }
+    }
+
+    /// This category's most-recently-opened docs (MRU order, capped at the display
+    /// count). Ids that no longer resolve to a live doc are dropped by the join.
+    private func recentDocuments(in category: DocumentCategory) -> [Document] {
+        let byID = Dictionary(uniqueKeysWithValues: documents.map { ($0.id, $0) })
+        return Array(recents.compactMap { byID[$0] }
+            .filter { $0.category == category }
+            .prefix(DocumentAssistant.recentDisplayCount))
+    }
+
+    /// This category's favorited docs, in the order they were pinned.
+    private func favoriteDocuments(in category: DocumentCategory) -> [Document] {
+        let byID = Dictionary(uniqueKeysWithValues: documents.map { ($0.id, $0) })
+        return favorites.compactMap { byID[$0] }.filter { $0.category == category }
     }
 
     private func folders(in category: DocumentCategory) -> [Folder] {
@@ -382,6 +460,15 @@ struct DocumentManagerView: View {
             } catch {
                 statusMessage = "Couldn't create note: \(error.localizedDescription)"
             }
+        }
+    }
+
+    /// Pins/unpins a doc as a favorite. Virtual: never changes its folder/category.
+    /// `onChanged()` reloads the host's favorites so the star and section update.
+    private func toggleFavorite(_ doc: Document) {
+        Task {
+            await assistant.setFavorite(doc.id, favorite: !favorites.contains(doc.id))
+            onChanged()
         }
     }
 
