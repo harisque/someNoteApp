@@ -17,6 +17,14 @@ struct AssistantPanel: View {
     /// Confidential live-data assets that can be scoped into a question alongside
     /// documents; their ids share `scopeIDs` with document ids.
     let dataLinks: [DataLink]
+    /// Ids of documents whose background embedding job is still running. Ask stays
+    /// disabled while any document in the effective scope is in this set, so a
+    /// question never runs against half-built vectors.
+    var pendingEmbeddingIDs: Set<UUID> = []
+    /// Whether the chat model is already resident (mirrors the launch gate). The
+    /// gate normally blocks entry until the model is ready, so the first question
+    /// must not claim "Starting on-device model…" when it is already warm.
+    var modelWarm: Bool = false
     var onOpenCitation: (Citation) -> Void
     var onOpenDocument: (UUID) -> Void
     var onDocumentsChanged: () -> Void
@@ -101,7 +109,20 @@ struct AssistantPanel: View {
                 .padding(.vertical, 4)
             }
             .frame(minHeight: 60, maxHeight: .infinity)
+        }
+        // Dock the input section to the safe-area edge instead of stacking it under a
+        // flexible ScrollView: SwiftUI keeps a `safeAreaInset` bottom bar above the
+        // keyboard on iPhone, whereas the plain VStack let the keyboard cover the ask
+        // bar once the answer region collapsed to its minimum height.
+        .safeAreaInset(edge: .bottom, spacing: 10) { askDock }
+    }
 
+    /// Citations, note action, quick prompts, and the ask bar, pinned to the bottom
+    /// of the panel (and lifted above the keyboard while typing). The opaque
+    /// background is required: the answer ScrollView extends underneath a bottom
+    /// `safeAreaInset`, so without it the streamed text shows through the dock.
+    private var askDock: some View {
+        VStack(alignment: .leading, spacing: 10) {
             if !answerCitations.isEmpty { citationChips }
 
             saveToNoteButton
@@ -110,6 +131,9 @@ struct AssistantPanel: View {
 
             askBar
         }
+        .padding(.top, 6)
+        .padding(.bottom, 4)
+        .background(Color(.systemBackground).ignoresSafeArea())
     }
 
     private var scopeLabel: String {
@@ -329,13 +353,36 @@ struct AssistantPanel: View {
         }
     }
 
+    /// Documents in the effective scope that are still embedding. An empty scope
+    /// means "all sources," so any pending document blocks. Data Links never block
+    /// (they carry no chunk embeddings).
+    private var blockingEmbeddings: [Document] {
+        let effective: Set<UUID> = scopeIDs.isEmpty ? Set(documents.map(\.id)) : scopeIDs
+        return documents.filter { pendingEmbeddingIDs.contains($0.id) && effective.contains($0.id) }
+    }
+    private var isAskBlocked: Bool { !blockingEmbeddings.isEmpty }
+    private var embeddingHint: String {
+        let names = blockingEmbeddings.map(\.name)
+        let shown = names.prefix(2).joined(separator: ", ")
+        let extra = names.count > 2 ? " +\(names.count - 2) more" : ""
+        return "Waiting for “\(shown)\(extra)” to finish embedding…"
+    }
+
     private var askBar: some View {
-        HStack {
-            TextField("Ask about your documents", text: $query)
-                .textFieldStyle(.roundedBorder)
-            Button("Send") { send() }
-                .disabled(isGenerating || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            if isGenerating { Button("Stop") { generationTask?.cancel() } }
+        VStack(alignment: .leading, spacing: 6) {
+            if isAskBlocked {
+                Label(embeddingHint, systemImage: "hourglass")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            HStack {
+                TextField("Ask about your documents", text: $query)
+                    .textFieldStyle(.roundedBorder)
+                Button("Send") { send() }
+                    .disabled(isGenerating || isAskBlocked || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if isGenerating { Button("Stop") { generationTask?.cancel() } }
+            }
         }
     }
 
@@ -366,7 +413,7 @@ struct AssistantPanel: View {
                         .foregroundStyle(Color("SCBlue"))
                 }
                 .buttonStyle(.plain)
-                .disabled(isGenerating)
+                .disabled(isGenerating || isAskBlocked)
             }
         }
     }
@@ -440,6 +487,9 @@ struct AssistantPanel: View {
             onRequestTestMode()
             return
         }
+        // Never run a question against half-built vectors: Ask waits until every
+        // document in scope has finished embedding.
+        guard !isAskBlocked else { return }
         let question = query
         query = ""
         askedQuestion = question
@@ -514,7 +564,7 @@ struct AssistantPanel: View {
                     : "\(count) excerpt(s)"
             )
         case .generating:
-            advance("generate", modelWarmedUp ? "Generating answer…" : "Starting on-device model…")
+            advance("generate", (modelWarm || modelWarmedUp) ? "Generating answer…" : "Starting on-device model…")
         case .finished:
             finishAll()
         }

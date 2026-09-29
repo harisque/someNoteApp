@@ -1,4 +1,10 @@
 import Foundation
+import OSLog
+
+/// Diagnostic channel for the semantic-index build path. Shares the embedder's
+/// subsystem/category so Console.app and the Xcode console show warm-up, the
+/// per-document jobs, and the embedder load together.
+private let embeddingLog = Logger(subsystem: "com.sc.boardiq", category: "Embedding")
 
 // MARK: - Result types
 
@@ -50,6 +56,51 @@ public struct DeepSearchResult: Codable, Hashable, Sendable {
         self.semanticMatches = semanticMatches
         self.semanticAvailable = semanticAvailable
     }
+}
+
+// MARK: - Embedding progress (observable UI state)
+
+/// Whole-library embedding progress snapshot for the launch gate. `isSettled`
+/// (no per-document jobs in flight) is the gate's completion signal rather than
+/// strict `embeddedChunks == totalChunks`: a failed embed clears the in-flight
+/// set without reaching 100%, and gating on "job finished" self-heals (Ask
+/// degrades to keyword-only) instead of locking the gate forever.
+public struct EmbeddingProgress: Sendable, Equatable {
+    public let totalChunks: Int
+    public let embeddedChunks: Int
+    public let inFlightDocuments: Int
+    public init(totalChunks: Int, embeddedChunks: Int, inFlightDocuments: Int) {
+        self.totalChunks = totalChunks
+        self.embeddedChunks = embeddedChunks
+        self.inFlightDocuments = inFlightDocuments
+    }
+    /// True once every background embedding job has finished (success or failure).
+    public var isSettled: Bool { inFlightDocuments == 0 }
+    public var isFullyEmbedded: Bool { totalChunks == 0 || embeddedChunks >= totalChunks }
+    public var fraction: Double {
+        totalChunks == 0 ? 1 : Double(min(embeddedChunks, totalChunks)) / Double(totalChunks)
+    }
+}
+
+/// One document's embedding progress. `isInFlight` means a background job is
+/// actively embedding it, which is the condition that blocks querying; viewing
+/// is always allowed.
+public struct DocumentEmbeddingState: Sendable, Equatable {
+    public let documentID: UUID
+    public let totalChunks: Int
+    public let embeddedChunks: Int
+    public let isInFlight: Bool
+    public init(documentID: UUID, totalChunks: Int, embeddedChunks: Int, isInFlight: Bool) {
+        self.documentID = documentID
+        self.totalChunks = totalChunks
+        self.embeddedChunks = embeddedChunks
+        self.isInFlight = isInFlight
+    }
+    public var fraction: Double {
+        totalChunks == 0 ? 1 : Double(min(embeddedChunks, totalChunks)) / Double(totalChunks)
+    }
+    /// A document is queryable once its background job is no longer running.
+    public var isReady: Bool { !isInFlight }
 }
 
 // MARK: - Deep search
@@ -261,10 +312,27 @@ extension DocumentAssistant {
     /// Returns immediately; the per-document jobs are fire-and-forget and no-ops
     /// when everything is already cached or the embedder can't produce vectors.
     public func warmEmbeddingCache() async {
-        guard !documents.isEmpty else { return }
+        embeddingLog.error("[Semantic] warmEmbeddingCache: documents=\(self.documents.count) index=\(self.index.count) embeddings=\(self.embeddings.count)")
+        guard !documents.isEmpty else {
+            embeddingLog.error("[Semantic] warmEmbeddingCache: no documents — nothing to embed")
+            return
+        }
         // One full rebuild (persist regenerates the whole index with stable,
         // content-derived chunk ids) instead of a per-document rebuild storm.
-        if index.isEmpty { try? persist() }
+        if index.isEmpty {
+            embeddingLog.error("[Semantic] warmEmbeddingCache: index empty — rebuilding via persist()")
+            try? persist()
+            embeddingLog.error("[Semantic] warmEmbeddingCache: index rebuilt, chunks=\(self.index.count)")
+        }
+        embeddingLog.error("[Semantic] warmEmbeddingCache: starting background embedding for \(self.documents.count) document(s)")
+        // Warm the embedder model itself, independent of chunk targets. With a
+        // full cache the per-document jobs embed nothing, so the container would
+        // otherwise stay cold until the first Ask — where the query-vector embed
+        // runs under a short timeout that cancels a still-loading model, degrading
+        // every question to keyword-only. This runs in an unstructured task the
+        // timeout can't cancel, so the model is resident before questions arrive.
+        embeddingLog.error("[Semantic] warmEmbeddingCache: preloading embedder model")
+        Task { await embedder.preload() }
         for d in documents { startBackgroundEmbedding(for: d.id) }
     }
 
@@ -281,28 +349,48 @@ extension DocumentAssistant {
             try? persistEmbeddings()
         }
         let targets = index.filter { $0.documentID == documentID && embeddings[$0.id] == nil }
-        guard !targets.isEmpty else { return }
+        embeddingLog.error("[Semantic] embedChunks(\(documentID.uuidString, privacy: .public)): index=\(self.index.count) cached=\(self.embeddings.count) targets=\(targets.count)")
+        guard !targets.isEmpty else {
+            embeddingLog.error("[Semantic] embedChunks: no targets — already cached or document has no chunks")
+            return
+        }
         var computed = 0
         defer { if computed > 0 { try? persistEmbeddings() } }
         for chunk in targets {
             try Task.checkCancellation()
             let vector = try await embedder.embed(chunk.text)
-            guard !vector.isEmpty else { return }
+            guard !vector.isEmpty else {
+                embeddingLog.error("[Semantic] embedChunks: embedder returned an EMPTY vector at chunk \(computed) — aborting document")
+                return
+            }
             embeddings[chunk.id] = vector
             computed += 1
-            if computed % 10 == 0 { try? persistEmbeddings() }
+            if computed % 10 == 0 {
+                try? persistEmbeddings()
+                embeddingLog.error("[Semantic] embedChunks: progress \(computed)/\(targets.count)")
+            }
         }
+        embeddingLog.error("[Semantic] embedChunks: DONE — embedded \(computed) chunk(s), cache now \(self.embeddings.count)")
     }
 
     /// Fire-and-forget background embedding for a freshly ingested document, so
     /// the semantic index is warm before any Ask or Deep Search needs it. Guarded
     /// by an in-flight set so repeat triggers don't duplicate work; failures are
-    /// silent — Deep Search's lazy `ensureChunkEmbeddings` remains the backfill.
+    /// logged (they used to be silent, which hid why Ask answered "keyword only")
+    /// and Deep Search's lazy `ensureChunkEmbeddings` remains the backfill.
     func startBackgroundEmbedding(for documentID: UUID) {
-        guard !embeddingInFlight.contains(documentID) else { return }
+        guard !embeddingInFlight.contains(documentID) else {
+            embeddingLog.error("[Semantic] startBackgroundEmbedding(\(documentID.uuidString, privacy: .public)): SKIPPED — already in flight")
+            return
+        }
         embeddingInFlight.insert(documentID)
+        embeddingLog.error("[Semantic] startBackgroundEmbedding(\(documentID.uuidString, privacy: .public)): launching task")
         Task {
-            do { try await embedChunks(for: documentID) } catch { /* backfill covers it */ }
+            do {
+                try await embedChunks(for: documentID)
+            } catch {
+                embeddingLog.error("[Semantic] startBackgroundEmbedding(\(documentID.uuidString, privacy: .public)): FAILED — \(error.localizedDescription, privacy: .public)")
+            }
             embeddingInFlight.remove(documentID)
         }
     }
@@ -325,5 +413,47 @@ extension DocumentAssistant {
             at: embeddingsURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
         try JSONEncoder().encode(keyed).write(to: embeddingsURL, options: .atomic)
+    }
+
+    // MARK: Observable embedding progress
+
+    /// Whole-library snapshot: total indexed chunks, how many already have a
+    /// cached vector, and how many documents still have a job in flight.
+    public func libraryEmbeddingProgress() -> EmbeddingProgress {
+        var embedded = 0
+        for chunk in index where embeddings[chunk.id] != nil { embedded += 1 }
+        return EmbeddingProgress(
+            totalChunks: index.count,
+            embeddedChunks: embedded,
+            inFlightDocuments: embeddingInFlight.count
+        )
+    }
+
+    /// Per-document snapshot keyed by document id. Totals/embedded are derived
+    /// from the shared index and cache; `isInFlight` mirrors `embeddingInFlight`.
+    /// Every live document gets an entry (0/0 when it has no chunks yet).
+    public func embeddingStates() -> [UUID: DocumentEmbeddingState] {
+        var totals: [UUID: Int] = [:]
+        var embedded: [UUID: Int] = [:]
+        for chunk in index {
+            totals[chunk.documentID, default: 0] += 1
+            if embeddings[chunk.id] != nil { embedded[chunk.documentID, default: 0] += 1 }
+        }
+        var states: [UUID: DocumentEmbeddingState] = [:]
+        for document in documents {
+            states[document.id] = DocumentEmbeddingState(
+                documentID: document.id,
+                totalChunks: totals[document.id] ?? 0,
+                embeddedChunks: embedded[document.id] ?? 0,
+                isInFlight: embeddingInFlight.contains(document.id)
+            )
+        }
+        return states
+    }
+
+    /// Ids of documents with a background embedding job currently running. Ask
+    /// and per-document Deep Search stay disabled for these until it clears.
+    public func pendingEmbeddingDocumentIDs() -> Set<UUID> {
+        Set(embeddingStates().filter { $0.value.isInFlight }.keys)
     }
 }

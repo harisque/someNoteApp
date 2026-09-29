@@ -11,7 +11,7 @@
 #   2. An Apple Distribution certificate is installed in the keychain
 #      (Xcode > Settings > Accounts, or handled automatically by automatic signing).
 #   3. The App Store Connect app record exists for bundle ID
-#      com.localtest.DocumentAssistantApp (display name: BoardIQ).
+#      com.sc.boardiq (display name: BoardIQ), Team ID 7H8UDM99LP.
 #   4. CURRENT_PROJECT_VERSION (build number) has been incremented in
 #      project.pbxproj for every re-upload (App Store Connect rejects duplicate
 #      build numbers for the same MARKETING_VERSION).

@@ -22,7 +22,7 @@ final class ModelCoordinator {
     /// Owned here (not in the view) so it survives entering/exiting Test Mode.
     let history = TestHistoryStore()
 
-    private let logger = Logger(subsystem: "com.localtest.DocumentAssistantApp", category: "TestMode")
+    private let logger = Logger(subsystem: "com.sc.boardiq", category: "TestMode")
 
     init(normalModel: QwenMLXLanguageModel, bundledConfig: ModelConfig) {
         self.normalModel = normalModel

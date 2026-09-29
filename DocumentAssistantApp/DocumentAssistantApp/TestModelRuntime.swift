@@ -77,7 +77,7 @@ final class TestModelRuntime: ObservableObject {
 
     private var container: ModelContainer?
     private var isGenerating = false
-    private let logger = Logger(subsystem: "com.localtest.DocumentAssistantApp", category: "TestMode")
+    private let logger = Logger(subsystem: "com.sc.boardiq", category: "TestMode")
 
     private enum Keys {
         static let model = "TestMode.model"

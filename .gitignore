@@ -24,9 +24,13 @@ MiniCPM/
 MiniCPM-V-Apps/
 demo_video/
 channels4_profile.jpg
+Standard-Chartered-logo-new.png
 
 # Local-only documents
 HANDOFF.md
+
+# Confidential sample documents (ship in app bundle, keep off GitHub)
+DocumentAssistantApp/Confidential/*.pdf
 
 # Backups of former embedded git repos
 .backup-DocumentAssistantApp-git/

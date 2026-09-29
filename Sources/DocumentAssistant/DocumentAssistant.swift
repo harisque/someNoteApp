@@ -1,10 +1,14 @@
 import Foundation
+import OSLog
 #if canImport(Accelerate)
 import Accelerate
 #endif
 #if canImport(PDFKit)
 import PDFKit
 #endif
+/// Diagnostic channel for the semantic query path; shares the embedder's
+/// subsystem/category so the whole pipeline surfaces together.
+private let semanticLog = Logger(subsystem: "com.sc.boardiq", category: "Embedding")
 public enum PromptMode:String,CaseIterable,Codable,Sendable{case ask}
 public struct Citation:Codable,Hashable,Sendable,Identifiable{
  public let document:String
@@ -30,7 +34,9 @@ public struct RetrievalStats:Hashable,Sendable{
  public init(lexical:Int,semantic:Int,semanticAvailable:Bool,fused:Int){self.lexical=lexical;self.semantic=semantic;self.semanticAvailable=semanticAvailable;self.fused=fused}
  public static let empty=RetrievalStats(lexical:0,semantic:0,semanticAvailable:false,fused:0)
 }
-public protocol DocumentEmbedder:Sendable{func embed(_ text:String)async throws->[Float]}
+public protocol DocumentEmbedder:Sendable{func embed(_ text:String)async throws->[Float];func preload()async}
+/// Default no-op so embedders with nothing to lazily load need not implement it.
+extension DocumentEmbedder{public func preload()async{}}
 /// Exact prompt-token counting for Ask's budget packing. The app injects the
 /// language model's real tokenizer so `makePrompt` measures evidence instead of
 /// estimating from a characters-per-token ratio: the estimate under-counts dense
@@ -451,8 +457,14 @@ public struct IndexedChunk:Codable,Hashable,Sendable{public let id:UUID;public l
  /// load must never stall a question).
  func semanticPassages(_ q:String,scope:Set<UUID>?=nil)async->[Passage]{
   let term=q.trimmingCharacters(in:.whitespacesAndNewlines)
-  guard !term.isEmpty,!index.isEmpty,!embeddings.isEmpty else { return [] }
-  guard let queryVector=await cachedQueryVector(for:term),!queryVector.isEmpty else { return [] }
+  if term.isEmpty||index.isEmpty||embeddings.isEmpty {
+   semanticLog.error("[Semantic] semanticPassages SHORT-CIRCUIT: termEmpty=\(term.isEmpty) indexEmpty=\(self.index.isEmpty) embeddingsEmpty=\(self.embeddings.isEmpty) — returning [] (Ask degrades to keyword-only)")
+   return []
+  }
+  guard let queryVector=await cachedQueryVector(for:term),!queryVector.isEmpty else {
+   semanticLog.error("[Semantic] semanticPassages: no query vector (embed failed or timed out) — returning []")
+   return []
+  }
   var scored:[(IndexedChunk,Double)]=[]
   for c in index {
    if let scope,!scope.contains(c.documentID) { continue }

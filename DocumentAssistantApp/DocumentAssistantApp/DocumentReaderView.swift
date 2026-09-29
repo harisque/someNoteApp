@@ -11,6 +11,9 @@ import DocumentAssistant
 struct DocumentReaderView: View {
     let document: Document
     let assistant: DocumentAssistant
+    /// True while this document's background embedding job is running: the reader
+    /// stays viewable, but shows a banner and disables Deep Search until it finishes.
+    var isEmbedding: Bool = false
     var focusCitation: Citation? = nil
     /// Asks the host (ContentView) to present the deep-search sheet for a query.
     /// The sheet lives at the root so its results survive detail-pane swaps:
@@ -49,6 +52,7 @@ struct DocumentReaderView: View {
     /// Deep Search runs across every document (read-only), so it is offered in
     /// all categories, unlike the personal-only Fact Check.
     private func requestDeepSearch(_ text: String) {
+        guard !isEmbedding else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         onRequestDeepSearch?(trimmed)
@@ -66,6 +70,7 @@ struct DocumentReaderView: View {
                     FactCheckButton { requestFactCheck(text) }
                 }
                 DeepSearchButton { requestDeepSearch(text) }
+                    .disabled(isEmbedding)
             }
         }
     }
@@ -99,7 +104,7 @@ struct DocumentReaderView: View {
                 )
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) { findBar }
+        .safeAreaInset(edge: .top, spacing: 0) { topInset }
         .searchable(text: $search, prompt: "Find in document")
         .onChange(of: search) { _, value in updateSearch(value) }
         .task(id: focusKey) { await resolve() }
@@ -110,6 +115,26 @@ struct DocumentReaderView: View {
         }
         .navigationTitle(document.name)
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// Top inset: the embedding banner (when this doc is still embedding) stacked
+    /// above the find bar.
+    @ViewBuilder private var topInset: some View {
+        if isEmbedding { embeddingBanner }
+        findBar
+    }
+
+    private var embeddingBanner: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text("Embedding in progress — Ask and Deep Search unlock when it finishes.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color("SCBlue").opacity(0.10))
     }
 
     // MARK: - Find
@@ -149,6 +174,7 @@ struct DocumentReaderView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .tint(Color("SCBlue"))
+                .disabled(isEmbedding)
                 Button { previousMatch() } label: { Image(systemName: "chevron.up") }
                     .disabled(totalMatches == 0)
                 Button { nextMatch() } label: { Image(systemName: "chevron.down") }

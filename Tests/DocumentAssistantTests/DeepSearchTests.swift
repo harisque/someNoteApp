@@ -432,4 +432,42 @@ struct HybridRetrievalTests {
         let remainingChunks = await assistant.index.filter { $0.documentID == appleID }
         #expect(remainingChunks.isEmpty)
     }
+
+    @Test("embedding progress reports library and per-document state")
+    func embeddingProgressReports() async throws {
+        let root = try workspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let assistant = makeAssistant(root, embedder: StubEmbedder())
+        let id = try await importText(assistant, root: root, name: "apple.txt", text: "apple text")
+
+        // The index is built synchronously at import, so chunk totals are known
+        // immediately, even before the background job finishes.
+        let mid = await assistant.libraryEmbeddingProgress()
+        #expect(mid.totalChunks > 0)
+
+        try await waitForBackgroundEmbedding(assistant)
+
+        // Vectors are cached a moment before the job clears its in-flight flag; poll
+        // until settled so the isSettled/isReady assertions stay deterministic.
+        var progress = mid
+        var tries = 0
+        while tries < 300 {
+            progress = await assistant.libraryEmbeddingProgress()
+            if progress.isSettled { break }
+            try await Task.sleep(for: .milliseconds(10))
+            tries += 1
+        }
+        #expect(progress.isSettled)
+        #expect(progress.isFullyEmbedded)
+        #expect(progress.embeddedChunks == progress.totalChunks)
+
+        let states = await assistant.embeddingStates()
+        let state = try #require(states[id])
+        #expect(!state.isInFlight)
+        #expect(state.isReady)
+        #expect(state.embeddedChunks >= state.totalChunks)
+
+        let pending = await assistant.pendingEmbeddingDocumentIDs()
+        #expect(pending.isEmpty)
+    }
 }

@@ -48,44 +48,124 @@ struct ContentView: View {
     @State private var openedDataLink: DataLinkRoute?
     @State private var columnVisibility: NavigationSplitViewVisibility = .doubleColumn
 
+    /// Launch gate: holds the app behind a non-interactive cover until the whole
+    /// library is embedded and the chat model is resident.
+    @State private var gate = LaunchGate()
+    /// Per-document embedding state, polled while any job is in flight. Drives the
+    /// Library row indicators, the Ask gate, and the reader's "embedding" banner.
+    @State private var embeddingStates: [UUID: DocumentEmbeddingState] = [:]
+    /// Ids of documents still embedding; Ask and their Deep Search stay disabled.
+    @State private var pendingEmbeddingIDs: Set<UUID> = []
+    @State private var embeddingWatch: Task<Void, Never>?
+
     var body: some View {
         Group {
-            if horizontalSizeClass == .regular { regularLayout } else { compactLayout }
-        }
-        .task {
-            // Seed Confidential from the app bundle (idempotent), then load state.
-            try? await assistant.syncBundledConfidential(
-                bundleFolderURL: Bundle.main.url(forResource: "Confidential", withExtension: nil)
-            )
-            // Configure the live Data Link source and seed bundled descriptors
-            // (idempotent by symbol) so Ask has structured data to cite.
-            // TEMPORARY: DemoBackfillSource wraps the real source to fill STAN.L's
-            // 2026-09-14 session, which Yahoo has not republished yet. Remove after the
-            // demo by reverting this line to `RemoteDataLinkSource()`.
-            await assistant.configureDataLinkSource(DemoBackfillSource(wrapped: RemoteDataLinkSource()))
-            if let descriptors = bundledDataLinkDescriptors() {
-                try? await assistant.seedDataLinks(descriptors)
+            if gate.isReady {
+                if horizontalSizeClass == .regular { regularLayout } else { compactLayout }
+            } else {
+                LaunchGateView(
+                    gate: gate,
+                    onRetry: loadModelIntoGate,
+                    onEnterAnyway: { gate.enteredManually = true }
+                )
             }
-            documents = await assistant.documents
-            folders = await assistant.folders
-            dataLinks = await assistant.listDataLinks()
-            recents = await assistant.recents
-            favorites = await assistant.favorites
-            if selectedDocumentID == nil { selectedDocumentID = documents.first?.id }
-            // Warm the semantic index in the background (fire-and-forget) so the
-            // first Ask or Deep Search finds cached vectors instead of paying for
-            // a blocking whole-library embedding build.
-            await assistant.warmEmbeddingCache()
-            // Best-effort refresh after the UI is populated; reload to pick up the new
-            // last-refresh stamps. A failure simply keeps the seeded state.
-            await assistant.refreshAllDataLinks()
-            dataLinks = await assistant.listDataLinks()
         }
+        .task { await bootstrap() }
         .fullScreenCover(isPresented: $showTestMode) {
             TestModeView(coordinator: coordinator)
         }
         .sheet(item: $deepSearchRequest) { request in
             DeepSearchSheet(query: request.text, assistant: assistant, onOpenCitation: focusInPlace)
+        }
+    }
+
+    // MARK: - Launch gate + bootstrap
+
+    /// Launch orchestration: seed and load the library, then hold the gate until
+    /// the whole library has finished embedding and the chat model is resident.
+    /// The Data Link refresh runs after entry so network latency never delays it.
+    private func bootstrap() async {
+        gate.isPreparing = true
+        #if targetEnvironment(simulator)
+        // MLX inference is unavailable in the Simulator, so don't require the model.
+        gate.modelRequired = false
+        #endif
+
+        // Seed Confidential from the app bundle (idempotent), then load state.
+        try? await assistant.syncBundledConfidential(
+            bundleFolderURL: Bundle.main.url(forResource: "Confidential", withExtension: nil)
+        )
+        // Configure the live Data Link source and seed bundled descriptors
+        // (idempotent by symbol) so Ask has structured data to cite.
+        // TEMPORARY: DemoBackfillSource wraps the real source to fill STAN.L's
+        // 2026-09-14 session, which Yahoo has not republished yet. Remove after the
+        // demo by reverting this line to `RemoteDataLinkSource()`.
+        await assistant.configureDataLinkSource(DemoBackfillSource(wrapped: RemoteDataLinkSource()))
+        if let descriptors = bundledDataLinkDescriptors() {
+            try? await assistant.seedDataLinks(descriptors)
+        }
+        documents = await assistant.documents
+        folders = await assistant.folders
+        dataLinks = await assistant.listDataLinks()
+        recents = await assistant.recents
+        favorites = await assistant.favorites
+        if selectedDocumentID == nil { selectedDocumentID = documents.first?.id }
+
+        // Start the chat-model load (device only). It reports into the gate
+        // reactively, so it needs no polling.
+        if gate.modelRequired {
+            loadModelIntoGate()
+        } else {
+            gate.modelState = .ready
+        }
+
+        // Warm the semantic index: rebuilds the index if needed, preloads the
+        // embedder model, and starts the per-document background embedding jobs.
+        await assistant.warmEmbeddingCache()
+
+        // Poll embedding progress into the gate until every job settles.
+        gate.isPreparing = false
+        while true {
+            let progress = await assistant.libraryEmbeddingProgress()
+            gate.totalChunks = progress.totalChunks
+            gate.embeddedChunks = progress.embeddedChunks
+            gate.embeddingSettled = progress.isSettled
+            if progress.isSettled { break }
+            try? await Task.sleep(for: .milliseconds(400))
+        }
+
+        // Post-entry: watch per-document embedding (for import gating) and refresh
+        // Data Links without blocking the gate.
+        startEmbeddingWatch()
+        Task {
+            await assistant.refreshAllDataLinks()
+            dataLinks = await assistant.listDataLinks()
+        }
+    }
+
+    /// Kicks off the chat-model load and mirrors its outcome into the gate. Called
+    /// once at launch and again by the gate's Retry button.
+    private func loadModelIntoGate() {
+        gate.modelState = .loading
+        Task { @MainActor in
+            await coordinator.normalModel.loadNow()
+            gate.modelState = coordinator.normalModel.loadState
+        }
+    }
+
+    /// Polls per-document embedding state while any job is in flight, feeding the
+    /// Library row indicators, the Ask gate, and the reader banner. Re-armed by
+    /// `refreshDocuments()` after an import; stops once nothing is pending.
+    private func startEmbeddingWatch() {
+        embeddingWatch?.cancel()
+        embeddingWatch = Task { @MainActor in
+            while !Task.isCancelled {
+                let states = await assistant.embeddingStates()
+                embeddingStates = states
+                pendingEmbeddingIDs = Set(states.filter { $0.value.isInFlight }.keys)
+                if pendingEmbeddingIDs.isEmpty { break }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
         }
     }
 
@@ -99,6 +179,7 @@ struct ContentView: View {
                 folders: folders,
                 recents: recents,
                 favorites: favorites,
+                embeddingStates: embeddingStates,
                 selection: $selectedDocumentID,
                 onOpenDocument: { selectedDocumentID = $0; selectedDataLinkID = nil },
                 onChanged: refreshDocuments,
@@ -115,6 +196,8 @@ struct ContentView: View {
                         documents: documents,
                         folders: folders,
                         dataLinks: dataLinks,
+                        pendingEmbeddingIDs: pendingEmbeddingIDs,
+                        modelWarm: gate.modelState == .ready,
                         onOpenCitation: focusInPlace,
                         onOpenDocument: { selectedDocumentID = $0 },
                         onDocumentsChanged: refreshDocuments,
@@ -172,7 +255,7 @@ struct ContentView: View {
                 )
                 .id(document.id)
             } else {
-                DocumentReaderView(document: document, assistant: assistant, focusCitation: focusCitation, onRequestDeepSearch: requestDeepSearch)
+                DocumentReaderView(document: document, assistant: assistant, isEmbedding: embeddingStates[document.id]?.isInFlight == true, focusCitation: focusCitation, onRequestDeepSearch: requestDeepSearch)
                     .id(document.id)
             }
         }
@@ -238,6 +321,8 @@ struct ContentView: View {
                 documents: documents,
                 folders: folders,
                 dataLinks: dataLinks,
+                pendingEmbeddingIDs: pendingEmbeddingIDs,
+                modelWarm: gate.modelState == .ready,
                 onOpenCitation: { citation in
                     if let linkID = dataLinkID(from: citation) {
                         openedDataLink = DataLinkRoute(id: linkID)
@@ -262,6 +347,7 @@ struct ContentView: View {
                     folders: folders,
                     recents: recents,
                     favorites: favorites,
+                    embeddingStates: embeddingStates,
                     selection: nil,
                     onOpenDocument: { openedDocumentID = $0 },
                     onChanged: refreshDocuments,
@@ -318,6 +404,9 @@ struct ContentView: View {
             if let selected = selectedDataLinkID, !dataLinks.contains(where: { $0.id == selected }) {
                 selectedDataLinkID = nil
             }
+            // Re-arm the embedding watch so a fresh import shows progress and gates
+            // Ask for that document until its vectors are ready.
+            startEmbeddingWatch()
         }
     }
 

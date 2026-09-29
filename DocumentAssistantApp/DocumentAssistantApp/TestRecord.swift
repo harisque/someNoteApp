@@ -64,7 +64,7 @@ final class TestHistoryStore: ObservableObject {
     /// Soft cap on stored runs; older entries are trimmed on append.
     private let maxRecords = 200
     private let fileURL: URL
-    private let logger = Logger(subsystem: "com.localtest.DocumentAssistantApp", category: "TestMode")
+    private let logger = Logger(subsystem: "com.sc.boardiq", category: "TestMode")
 
     init(fileURL: URL? = nil) {
         if let fileURL {

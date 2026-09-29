@@ -31,6 +31,9 @@ struct DocumentManagerView: View {
     /// its `folderID`/`category` never change.
     var recents: [UUID] = []
     var favorites: [UUID] = []
+    /// Per-document embedding state. A doc that is still embedding shows a spinner
+    /// and percentage in its row; viewing stays allowed, so the row remains tappable.
+    var embeddingStates: [UUID: DocumentEmbeddingState] = [:]
     /// Non-nil on iPad (drives the detail pane); nil on iPhone (rows open directly).
     var selection: Binding<UUID?>?
     var onOpenDocument: (UUID) -> Void
@@ -307,6 +310,15 @@ struct DocumentManagerView: View {
                         .lineLimit(1)
                     if doc.category == .confidential && !doc.isNote {
                         Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let state = embeddingStates[doc.id], state.isInFlight {
+                        HStack(spacing: 4) {
+                            ProgressView().controlSize(.small)
+                            Text("Embedding… \(Int(state.fraction * 100))%")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                     Spacer()
                 }

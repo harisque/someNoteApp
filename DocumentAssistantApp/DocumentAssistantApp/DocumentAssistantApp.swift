@@ -9,6 +9,16 @@ import MLXVLM
 import MLXLMCommon
 import MLXLMTokenizers
 
+/// Lifecycle of the on-device chat model, surfaced so the launch gate can show
+/// "Starting on-device model…" and block entry until it is resident (or report a
+/// failure with a retry/enter-anyway escape instead of hanging).
+enum ModelLoadState: Equatable {
+    case idle
+    case loading
+    case ready
+    case failed(String)
+}
+
 @MainActor
 final class QwenMLXLanguageModel: LanguageModel {
     private let directory: URL
@@ -17,7 +27,10 @@ final class QwenMLXLanguageModel: LanguageModel {
     private let temperature: Float
     private var container: ModelContainer?
     private var isGenerating = false
-    private let logger = Logger(subsystem: "com.localtest.DocumentAssistantApp", category: "Inference")
+    /// Mirrors `ensureLoaded()` for the launch gate. Plain property (not
+    /// `@Observable`): the gate copies it into its own observable state.
+    private(set) var loadState: ModelLoadState = .idle
+    private let logger = Logger(subsystem: "com.sc.boardiq", category: "Inference")
 
     init(directory: URL, config: ModelConfig) {
         self.directory = directory
@@ -145,6 +158,20 @@ final class QwenMLXLanguageModel: LanguageModel {
         guard !isGenerating else { return }
         _ = try? await ensureLoaded()
     }
+
+    /// Explicit load that records its outcome in ``loadState`` for the launch
+    /// gate. Idempotent while loading; a failure is captured (not thrown) so the
+    /// gate can offer Retry / Enter anyway instead of blocking forever.
+    func loadNow() async {
+        guard loadState != .loading else { return }
+        loadState = .loading
+        do {
+            _ = try await ensureLoaded()
+            loadState = .ready
+        } catch {
+            loadState = .failed(error.localizedDescription)
+        }
+    }
 }
 
 /// Exact prompt-token counting for the Ask packer, using the bundled LLM's
@@ -155,7 +182,7 @@ final class QwenMLXLanguageModel: LanguageModel {
 actor QwenTokenCounter: PromptTokenCounter {
     private let directory: URL
     private var tokenizer: (any MLXLMCommon.Tokenizer)?
-    private let logger = Logger(subsystem: "com.localtest.DocumentAssistantApp", category: "Inference")
+    private let logger = Logger(subsystem: "com.sc.boardiq", category: "Inference")
     init(directory: URL) { self.directory = directory }
     func tokenCount(_ text: String) async -> Int? {
         do {
